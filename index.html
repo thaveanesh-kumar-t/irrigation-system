@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Real-Time Irrigation Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        emerald: {
+                            400: '#34d399',
+                            500: '#10b981',
+                            600: '#059669',
+                            900: '#064e3b',
+                            950: '#022c22',
+                        },
+                        slate: {
+                            850: '#151e2e',
+                            900: '#0f172a',
+                            950: '#020617',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
+
+    <!-- Top Navigation Bar -->
+    <header class="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <!-- Logo & Title -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-900/30">
+                    <i class="fa-solid fa-seedling text-white text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold bg-gradient-to-r from-white via-slate-200 to-emerald-400 bg-clip-text text-transparent">
+                        AgriPulse
+                    </h1>
+                    <p class="text-xs text-slate-400 hidden sm:block">ESP32 Hardware Direct Interface</p>
+                </div>
+            </div>
+
+            <!-- Connection Status Badge -->
+            <div class="flex items-center gap-3">
+                <div id="connectionBadge" class="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-rose-950/80 text-rose-400 border border-rose-800/60 shadow-inner">
+                    <span id="connectionDotPing" class="relative flex h-2 w-2">
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                    </span>
+                    <span id="statusText">Disconnected</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full space-y-6 flex-grow">
+
+        <!-- Disconnection Alert Banner -->
+        <div id="offlineBanner" class="p-4 bg-rose-950/90 border border-rose-800/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xl transition-all">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-rose-900/50 border border-rose-700/50 flex items-center justify-center text-rose-400 shrink-0">
+                    <i class="fa-solid fa-plug-circle-xmark text-xl"></i>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-rose-200">Wi-Fi / ESP32 Not Connected</h3>
+                    <p class="text-xs text-rose-300/80">Make sure your mobile/PC is connected to the same Wi-Fi network and the IP address below is correct.</p>
+                </div>
+            </div>
+            <button id="retryConnectBtn" class="px-4 py-2 bg-rose-800 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold whitespace-nowrap transition-all shadow-md active:scale-95">
+                <i class="fa-solid fa-rotate-right mr-1.5"></i> Test Connection
+            </button>
+        </div>
+
+        <!-- Network & Target Config Card -->
+        <section class="glass-card rounded-2xl p-4 sm:p-5 shadow-xl">
+            <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                
+                <!-- Input IP Address -->
+                <div class="flex-grow w-full lg:w-auto">
+                    <label for="esp32Ip" class="block text-xs font-medium text-slate-400 mb-1.5 flex items-center gap-2">
+                        <i class="fa-solid fa-network-wired text-slate-400"></i> ESP32 Target IP Address
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <div class="relative flex-grow">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 text-sm font-mono">http://</span>
+                            <input type="text" id="esp32Ip" value="192.168.1.50" placeholder="192.168.x.x"
+                                class="w-full pl-16 pr-4 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 font-mono text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                        </div>
+                        <button id="saveIpBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-all flex items-center gap-2 whitespace-nowrap active:scale-95 shadow-lg shadow-emerald-900/30">
+                            <i class="fa-solid fa-floppy-disk"></i> Connect & Save
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Polling Interval Selector -->
+                <div class="flex items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
+                    <div class="flex items-center gap-2">
+                        <label for="pollingRate" class="text-xs font-medium text-slate-400 whitespace-nowrap">Poll Interval:</label>
+                        <select id="pollingRate" class="bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-200 px-3 py-2 focus:outline-none focus:border-emerald-500">
+                            <option value="2000" selected>Every 2s</option>
+                            <option value="5000">Every 5s</option>
+                            <option value="10000">Every 10s</option>
+                            <option value="manual">Manual Only</option>
+                        </select>
+                    </div>
+
+                    <button id="refreshBtn" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-sm font-medium transition-all flex items-center gap-2 active:scale-95">
+                        <i class="fa-solid fa-rotate text-emerald-400"></i> Poll Now
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Telemetry Display Cards Grid -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            
+            <!-- Soil Moisture Card -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden group">
+                <div class="flex justify-between items-start mb-3">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Soil Moisture</span>
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                        <i class="fa-solid fa-droplet text-base"></i>
+                    </div>
+                </div>
+                <div class="flex items-baseline gap-2 mb-3">
+                    <span id="moistureValue" class="text-3xl font-bold font-mono text-slate-500">--</span>
+                    <span class="text-lg text-slate-500 font-medium">%</span>
+                    <span id="moistureBadge" class="ml-auto text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                        Offline
+                    </span>
+                </div>
+                <div class="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden">
+                    <div id="moistureBar" class="bg-emerald-500 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                    <span>Dry (&lt;30%)</span>
+                    <span>30-40%</span>
+                    <span>Wet (&gt;40%)</span>
+                </div>
+            </div>
+
+            <!-- Temperature Card -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden group">
+                <div class="flex justify-between items-start mb-3">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Temperature</span>
+                    <button id="unitToggleBtn" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-md border border-slate-700 font-mono transition-all">
+                        &deg;C / &deg;F
+                    </button>
+                </div>
+                <div class="flex items-baseline gap-2 mb-3">
+                    <span id="tempValue" class="text-3xl font-bold font-mono text-slate-500">--</span>
+                    <span id="tempUnit" class="text-lg text-slate-500 font-medium">&deg;C</span>
+                    <div id="tempBadge" class="ml-auto flex items-center gap-1 text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                        <i class="fa-solid fa-temperature-three-quarters"></i> --
+                    </div>
+                </div>
+                <div class="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden">
+                    <div id="tempBar" class="bg-amber-500 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                    <span>Min: 0&deg;C</span>
+                    <span>Max: 50&deg;C</span>
+                </div>
+            </div>
+
+            <!-- Humidity Card -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden group">
+                <div class="flex justify-between items-start mb-3">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Air Humidity</span>
+                    <div class="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                        <i class="fa-solid fa-wind text-base"></i>
+                    </div>
+                </div>
+                <div class="flex items-baseline gap-2 mb-3">
+                    <span id="humidityValue" class="text-3xl font-bold font-mono text-slate-500">--</span>
+                    <span class="text-lg text-slate-500 font-medium">%</span>
+                </div>
+                <div class="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden">
+                    <div id="humidityBar" class="bg-cyan-500 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                    <span>0%</span>
+                    <span>Ideal: 50-70%</span>
+                    <span>100%</span>
+                </div>
+            </div>
+
+            <!-- Pump Status Badge Card -->
+            <div id="pumpCard" class="glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Water Pump Status</span>
+                    <i id="pumpIcon" class="fa-solid fa-faucet-drip text-slate-600 text-lg"></i>
+                </div>
+                <div class="flex items-center gap-3 my-2">
+                    <div id="pumpPulse" class="w-4 h-4 rounded-full bg-slate-700"></div>
+                    <span id="pumpStatusText" class="text-2xl font-bold font-mono text-slate-500">OFFLINE</span>
+                </div>
+                <div class="mt-3 pt-2 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
+                    <span>Operating Mode:</span>
+                    <span id="activeModeBadge" class="font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">--</span>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Controls & Real-time Charts Grid -->
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- Left Column: Manual Control Panel -->
+            <div class="glass-card rounded-2xl p-5 flex flex-col justify-between space-y-6">
+                <div>
+                    <h2 class="text-base font-bold text-slate-200 mb-1 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-emerald-400"></i> Control Commands
+                    </h2>
+                    <p class="text-xs text-slate-400">Send direct requests to your ESP32 board endpoints.</p>
+                </div>
+
+                <!-- Action Buttons (Disabled when disconnected) -->
+                <div class="space-y-3">
+                    <!-- Auto Mode Button -->
+                    <button id="btnAuto" disabled class="control-btn w-full py-3.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-between border bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed opacity-60">
+                        <span class="flex items-center gap-3">
+                            <i class="fa-solid fa-robot text-lg"></i>
+                            <span class="btn-text">AUTO MODE</span>
+                        </span>
+                        <i class="fa-solid fa-chevron-right text-xs opacity-50"></i>
+                    </button>
+
+                    <!-- Turn Pump ON -->
+                    <button id="btnOn" disabled class="control-btn w-full py-3.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-between border bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed opacity-60">
+                        <span class="flex items-center gap-3">
+                            <i class="fa-solid fa-power-off text-lg"></i>
+                            <span class="btn-text">TURN PUMP ON</span>
+                        </span>
+                        <i class="fa-solid fa-chevron-right text-xs opacity-50"></i>
+                    </button>
+
+                    <!-- Turn Pump OFF -->
+                    <button id="btnOff" disabled class="control-btn w-full py-3.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-between border bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed opacity-60">
+                        <span class="flex items-center gap-3">
+                            <i class="fa-solid fa-circle-stop text-lg"></i>
+                            <span class="btn-text">TURN PUMP OFF</span>
+                        </span>
+                        <i class="fa-solid fa-chevron-right text-xs opacity-50"></i>
+                    </button>
+                </div>
+
+                <!-- Threshold Information Card -->
+                <div class="p-3.5 bg-slate-900/90 rounded-xl border border-slate-800 text-xs space-y-2">
+                    <div class="font-semibold text-slate-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-info text-emerald-400"></i> Hardware Rules
+                    </div>
+                    <ul class="text-slate-400 space-y-1 list-disc list-inside">
+                        <li>Pump turns <strong class="text-emerald-400">ON</strong> when Soil &lt; 30%</li>
+                        <li>Pump turns <strong class="text-rose-400">OFF</strong> when Soil &gt; 40%</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Right Column: Real-time Telemetry Analytics Chart -->
+            <div class="glass-card rounded-2xl p-5 lg:col-span-2 flex flex-col justify-between">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-line text-emerald-400"></i> Hardware Telemetry Analytics
+                        </h2>
+                        <p class="text-xs text-slate-400">Real-time chart updating directly from ESP32 responses</p>
+                    </div>
+                    <span id="chartStatusBadge" class="text-xs font-mono text-slate-400 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800">
+                        Chart Paused
+                    </span>
+                </div>
+
+                <!-- Chart Canvas Container -->
+                <div class="relative w-full h-64 sm:h-72">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- System Activity Log Console -->
+        <section class="glass-card rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-emerald-400"></i> Live Communication Log
+                </h2>
+                <button id="clearLogBtn" class="text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800 transition-all">
+                    Clear Log
+                </button>
+            </div>
+
+            <div id="logConsole" class="bg-slate-950 rounded-xl p-4 h-36 overflow-y-auto font-mono text-xs text-slate-300 border border-slate-800 space-y-1.5">
+                <!-- Log entries added dynamically -->
+            </div>
+        </section>
+
+        <!-- ESP32 Arduino Code Helper Accordion -->
+        <section class="glass-card rounded-2xl p-5">
+            <details class="group">
+                <summary class="flex justify-between items-center font-bold text-slate-300 text-sm cursor-pointer list-none">
+                    <span class="flex items-center gap-2">
+                        <i class="fa-solid fa-code text-emerald-400"></i> Required ESP32 Arduino Code Setup (JSON & CORS)
+                    </span>
+                    <i class="fa-solid fa-chevron-down text-xs text-slate-400 group-open:rotate-180 transition-transform"></i>
+                </summary>
+                <div class="mt-4 text-xs text-slate-400 space-y-3 pt-3 border-t border-slate-800">
+                    <p>To ensure this web dashboard can fetch telemetry without being blocked by browser safety rules, add a <code class="text-emerald-400 font-mono">/data</code> endpoint with CORS headers in your ESP32 code:</p>
+                    <pre class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-emerald-300 overflow-x-auto text-[11px]">
+// Add this route handler to your ESP32 web server code:
+void handleData() {
+  String json = "{";
+  json += "\"temp\":" + String(temperature, 1) + ",";
+  json += "\"hum\":" + String(humidity, 0) + ",";
+  json += "\"moisture\":" + String(moisture) + ",";
+  json += "\"pump\":" + String(pumpState ? "true" : "false") + ",";
+  json += "\"mode\":\"" + String(operatingMode == 0 ? "AUTO" : (operatingMode == 1 ? "MANUAL ON" : "MANUAL OFF")) + "\"";
+  json += "}";
+  
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+}
+
+// In setup():
+server.on("/data", handleData);
+server.enableCORS(true);</pre>
+                </div>
+            </details>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/60 bg-slate-900/40 py-4 text-center text-xs text-slate-500">
+        <p>AgriPulse Hardware Dashboard &bull; Direct ESP32 Web Interface</p>
+    </footer>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed top-20 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <script>
+        // -------------------------------------------------------------
+        // APPLICATION STATE (STRICTLY HARDWARE-BOUND, NO DEMO SIMULATION)
+        // -------------------------------------------------------------
+        const state = {
+            ip: localStorage.getItem('esp32_ip') || '192.168.1.50',
+            isConnected: false,
+            pollingRate: 2000, // ms
+            tempUnit: 'C', // 'C' or 'F'
+            moisture: null,
+            temperature: null,
+            humidity: null,
+            pumpState: false,
+            operatingMode: '--',
+            pollTimer: null,
+            chart: null,
+            consecutiveFailures: 0
+        };
+
+        // DOM Elements
+        const esp32IpInput = document.getElementById('esp32Ip');
+        const saveIpBtn = document.getElementById('saveIpBtn');
+        const pollingRateSelect = document.getElementById('pollingRate');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const retryConnectBtn = document.getElementById('retryConnectBtn');
+        const offlineBanner = document.getElementById('offlineBanner');
+        const statusText = document.getElementById('statusText');
+        const connectionBadge = document.getElementById('connectionBadge');
+        const connectionDotPing = document.getElementById('connectionDotPing');
+
+        const moistureValue = document.getElementById('moistureValue');
+        const moistureBar = document.getElementById('moistureBar');
+        const moistureBadge = document.getElementById('moistureBadge');
+
+        const tempValue = document.getElementById('tempValue');
+        const tempUnit = document.getElementById('tempUnit');
+        const tempBar = document.getElementById('tempBar');
+        const tempBadge = document.getElementById('tempBadge');
+        const unitToggleBtn = document.getElementById('unitToggleBtn');
+
+        const humidityValue = document.getElementById('humidityValue');
+        const humidityBar = document.getElementById('humidityBar');
+
+        const pumpCard = document.getElementById('pumpCard');
+        const pumpIcon = document.getElementById('pumpIcon');
+        const pumpPulse = document.getElementById('pumpPulse');
+        const pumpStatusText = document.getElementById('pumpStatusText');
+        const activeModeBadge = document.getElementById('activeModeBadge');
+
+        const btnAuto = document.getElementById('btnAuto');
+        const btnOn = document.getElementById('btnOn');
+        const btnOff = document.getElementById('btnOff');
+        const chartStatusBadge = document.getElementById('chartStatusBadge');
+
+        const logConsole = document.getElementById('logConsole');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+
+        // -------------------------------------------------------------
+        // INITIALIZATION
+        // -------------------------------------------------------------
+        window.addEventListener('DOMContentLoaded', () => {
+            // Restore stored IP
+            esp32IpInput.value = state.ip;
+            
+            // Initialize Chart
+            initChart();
+
+            // Set up Event Listeners
+            setupEventListeners();
+
+            // Start Initial Connection Attempt
+            addLog(`Dashboard started. Target IP: http://${state.ip}`, 'SYSTEM');
+            fetchTelemetryData();
+            startPolling();
+        });
+
+        // -------------------------------------------------------------
+        // EVENT LISTENERS
+        // -------------------------------------------------------------
+        function setupEventListeners() {
+            // Save & Connect IP
+            saveIpBtn.addEventListener('click', () => {
+                const ip = esp32IpInput.value.trim();
+                if (ip) {
+                    state.ip = ip;
+                    localStorage.setItem('esp32_ip', ip);
+                    showToast('Target IP Saved! Reconnecting...', 'info');
+                    addLog(`Target IP changed to http://${ip}`, 'SYSTEM');
+                    state.consecutiveFailures = 0;
+                    fetchTelemetryData();
+                }
+            });
+
+            // Retry Connection Button
+            retryConnectBtn.addEventListener('click', () => {
+                showToast('Testing connection to ESP32...', 'info');
+                fetchTelemetryData();
+            });
+
+            // Polling Rate Change
+            pollingRateSelect.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (val === 'manual') {
+                    state.pollingRate = null;
+                } else {
+                    state.pollingRate = parseInt(val, 10);
+                }
+                startPolling();
+                showToast(`Polling updated: ${val === 'manual' ? 'Manual' : val + 'ms'}`, 'info');
+            });
+
+            // Manual Refresh
+            refreshBtn.addEventListener('click', () => {
+                fetchTelemetryData();
+            });
+
+            // Unit Toggle (°C / °F)
+            unitToggleBtn.addEventListener('click', () => {
+                state.tempUnit = state.tempUnit === 'C' ? 'F' : 'C';
+                if (state.isConnected) {
+                    renderUIWithData();
+                }
+                showToast(`Temperature unit switched to °${state.tempUnit}`, 'info');
+            });
+
+            // Control Action Buttons
+            btnAuto.addEventListener('click', () => sendCommand('auto'));
+            btnOn.addEventListener('click', () => sendCommand('on'));
+            btnOff.addEventListener('click', () => sendCommand('off'));
+
+            // Clear Log
+            clearLogBtn.addEventListener('click', () => {
+                logConsole.innerHTML = '';
+            });
+        }
+
+        // -------------------------------------------------------------
+        // CHART SETUP
+        // -------------------------------------------------------------
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+
+            state.chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Moisture (%)',
+                            data: [],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'Temp (°C)',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            borderDash: [4, 4],
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Humidity (%)',
+                            data: [],
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } },
+                            min: 0,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(timeLabel, moisture, temp, humidity) {
+            if (!state.chart || !state.isConnected) return;
+
+            const chart = state.chart;
+            chart.data.labels.push(timeLabel);
+            chart.data.datasets[0].data.push(moisture);
+            chart.data.datasets[1].data.push(temp);
+            chart.data.datasets[2].data.push(humidity);
+
+            // Keep maximum 15 real data points
+            if (chart.data.labels.length > 15) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+                chart.data.datasets[2].data.shift();
+            }
+
+            chart.update('none');
+        }
+
+        // -------------------------------------------------------------
+        // HARDWARE POLLING & DIRECT FETCH
+        // -------------------------------------------------------------
+        function startPolling() {
+            if (state.pollTimer) clearInterval(state.pollTimer);
+            
+            if (state.pollingRate) {
+                state.pollTimer = setInterval(() => {
+                    fetchTelemetryData();
+                }, state.pollingRate);
+            }
+        }
+
+        async function fetchTelemetryData() {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s timeout
+
+            try {
+                // Try JSON endpoint first (/data), fallback to HTML parsing if endpoint not found
+                let response;
+                try {
+                    response = await fetch(`http://${state.ip}/data`, { 
+                        method: 'GET', 
+                        signal: controller.signal 
+                    });
+                } catch (e) {
+                    // Try root URL if /data failed
+                    response = await fetch(`http://${state.ip}/`, { 
+                        method: 'GET', 
+                        signal: controller.signal 
+                    });
+                }
+
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    const contentType = response.headers.get('content-type');
+                    
+                    if (contentType && contentType.includes('application/json')) {
+                        const data = await response.json();
+                        state.temperature = parseFloat(data.temp);
+                        state.humidity = parseFloat(data.hum);
+                        state.moisture = parseFloat(data.moisture);
+                        state.pumpState = Boolean(data.pump);
+                        state.operatingMode = data.mode || 'AUTO';
+                    } else {
+                        // Parse HTML fallback
+                        const htmlText = await response.text();
+                        parseESP32HTMLResponse(htmlText);
+                    }
+
+                    // Successfully fetched real data
+                    if (!state.isConnected) {
+                        addLog(`Connected to ESP32 at http://${state.ip}`, 'ONLINE');
+                        showToast('ESP32 Connected!', 'success');
+                    }
+                    state.isConnected = true;
+                    state.consecutiveFailures = 0;
+                    renderUIWithData();
+
+                } else {
+                    handleConnectionFailure(`HTTP status ${response.status}`);
+                }
+
+            } catch (error) {
+                clearTimeout(timeoutId);
+                handleConnectionFailure(error.name === 'AbortError' ? 'Timeout (2.5s)' : 'Network Error / Unreachable');
+            }
+        }
+
+        function parseESP32HTMLResponse(html) {
+            const tempMatch = html.match(/Temperature:\s*([\d\.]+)/i);
+            const humMatch = html.match(/Humidity:\s*([\d\.]+)/i);
+            const moistMatch = html.match(/Soil Moisture:\s*([\d\.]+)/i);
+            const pumpMatch = html.match(/Pump Status:\s*(ON|OFF)/i);
+            const modeMatch = html.match(/Control Mode:\s*(AUTO|MANUAL ON|MANUAL OFF)/i);
+
+            if (tempMatch) state.temperature = parseFloat(tempMatch[1]);
+            if (humMatch) state.humidity = parseFloat(humMatch[1]);
+            if (moistMatch) state.moisture = parseFloat(moistMatch[1]);
+            if (pumpMatch) state.pumpState = pumpMatch[1].toUpperCase() === 'ON';
+            if (modeMatch) state.operatingMode = modeMatch[1].toUpperCase();
+        }
+
+        function handleConnectionFailure(reason) {
+            state.consecutiveFailures++;
+            
+            if (state.isConnected || state.consecutiveFailures === 1) {
+                addLog(`Connection Failed: ${reason}`, 'OFFLINE');
+            }
+
+            state.isConnected = false;
+            renderOfflineUI();
+        }
+
+        // Send Command to ESP32 Endpoint
+        async function sendCommand(endpoint) {
+            if (!state.isConnected) {
+                showToast('Cannot send command: ESP32 is offline', 'error');
+                return;
+            }
+
+            addLog(`Sending command: GET http://${state.ip}/${endpoint}`, 'COMMAND');
+
+            try {
+                const response = await fetch(`http://${state.ip}/${endpoint}`, { 
+                    method: 'GET'
+                });
+                
+                showToast(`Command /${endpoint} sent!`, 'success');
+                // Refresh telemetry immediately after command
+                setTimeout(fetchTelemetryData, 500);
+
+            } catch (error) {
+                showToast(`Failed to send /${endpoint}`, 'error');
+                addLog(`Command /${endpoint} failed: ${error.message}`, 'ERROR');
+            }
+        }
+
+        // -------------------------------------------------------------
+        // UI RENDERERS (CONNECTED vs DISCONNECTED)
+        // -------------------------------------------------------------
+        function renderUIWithData() {
+            // Hide Offline Banner & Update Badge
+            offlineBanner.classList.add('hidden');
+            statusText.textContent = 'Connected';
+            connectionBadge.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 shadow-inner';
+            connectionDotPing.innerHTML = `
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            `;
+
+            // Enable Control Buttons
+            enableControlButtons(true);
+
+            // Soil Moisture
+            const mVal = Math.round(state.moisture);
+            moistureValue.textContent = mVal;
+            moistureValue.className = 'text-3xl font-bold font-mono text-white';
+            moistureBar.style.width = `${Math.min(100, Math.max(0, mVal))}%`;
+
+            if (mVal < 30) {
+                moistureBadge.textContent = 'DRY (<30%)';
+                moistureBadge.className = 'ml-auto text-xs px-2.5 py-0.5 rounded-full font-semibold bg-rose-950/80 text-rose-400 border border-rose-800/60';
+            } else if (mVal > 40) {
+                moistureBadge.textContent = 'WET (>40%)';
+                moistureBadge.className = 'ml-auto text-xs px-2.5 py-0.5 rounded-full font-semibold bg-cyan-950/80 text-cyan-400 border border-cyan-800/60';
+            } else {
+                moistureBadge.textContent = 'OPTIMAL';
+                moistureBadge.className = 'ml-auto text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-950/80 text-emerald-400 border border-emerald-800/60';
+            }
+
+            // Temperature
+            let displayTemp = state.temperature;
+            if (state.tempUnit === 'F') {
+                displayTemp = (state.temperature * 9/5) + 32;
+            }
+            tempValue.textContent = displayTemp.toFixed(1);
+            tempValue.className = 'text-3xl font-bold font-mono text-white';
+            tempUnit.innerHTML = `&deg;${state.tempUnit}`;
+            tempBar.style.width = `${Math.min(100, Math.max(0, (state.temperature / 50) * 100))}%`;
+            tempBadge.innerHTML = `<i class="fa-solid fa-temperature-three-quarters"></i> Normal`;
+            tempBadge.className = 'ml-auto text-xs text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-800/40';
+
+            // Humidity
+            humidityValue.textContent = Math.round(state.humidity);
+            humidityValue.className = 'text-3xl font-bold font-mono text-white';
+            humidityBar.style.width = `${Math.min(100, Math.max(0, state.humidity))}%`;
+
+            // Pump Card Status
+            if (state.pumpState) {
+                pumpStatusText.textContent = 'PUMP ACTIVE';
+                pumpStatusText.className = 'text-2xl font-bold font-mono text-emerald-400';
+                pumpIcon.className = 'fa-solid fa-faucet-drip text-emerald-400 text-lg animate-bounce';
+                pumpPulse.className = 'w-4 h-4 rounded-full bg-emerald-500 animate-pulse';
+                pumpCard.className = 'glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300 border-emerald-500/60 shadow-lg shadow-emerald-950/50';
+            } else {
+                pumpStatusText.textContent = 'IDLE';
+                pumpStatusText.className = 'text-2xl font-bold font-mono text-slate-300';
+                pumpIcon.className = 'fa-solid fa-faucet-drip text-slate-500 text-lg';
+                pumpPulse.className = 'w-4 h-4 rounded-full bg-slate-600';
+                pumpCard.className = 'glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300';
+            }
+
+            // Operating Mode
+            activeModeBadge.textContent = state.operatingMode || 'AUTO';
+            activeModeBadge.className = 'font-semibold text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800';
+
+            // Chart Update
+            chartStatusBadge.textContent = 'Live Updating';
+            chartStatusBadge.className = 'text-xs font-mono text-emerald-400 bg-emerald-950 px-2.5 py-1 rounded-md border border-emerald-800';
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            updateChart(timeStr, mVal, displayTemp, state.humidity);
+        }
+
+        function renderOfflineUI() {
+            // Show Offline Banner & Badge
+            offlineBanner.classList.remove('hidden');
+            statusText.textContent = 'Disconnected';
+            connectionBadge.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-rose-950/80 text-rose-400 border border-rose-800/60 shadow-inner';
+            connectionDotPing.innerHTML = `<span class="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>`;
+
+            // Disable Control Buttons
+            enableControlButtons(false);
+
+            // Freeze Displays to '--'
+            moistureValue.textContent = '--';
+            moistureValue.className = 'text-3xl font-bold font-mono text-slate-500';
+            moistureBar.style.width = '0%';
+            moistureBadge.textContent = 'Offline';
+            moistureBadge.className = 'ml-auto text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-400 border border-slate-700';
+
+            tempValue.textContent = '--';
+            tempValue.className = 'text-3xl font-bold font-mono text-slate-500';
+            tempBar.style.width = '0%';
+            tempBadge.innerHTML = `<i class="fa-solid fa-temperature-three-quarters"></i> --`;
+            tempBadge.className = 'ml-auto text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700';
+
+            humidityValue.textContent = '--';
+            humidityValue.className = 'text-3xl font-bold font-mono text-slate-500';
+            humidityBar.style.width = '0%';
+
+            pumpStatusText.textContent = 'OFFLINE';
+            pumpStatusText.className = 'text-2xl font-bold font-mono text-slate-500';
+            pumpIcon.className = 'fa-solid fa-faucet-drip text-slate-600 text-lg';
+            pumpPulse.className = 'w-4 h-4 rounded-full bg-slate-700';
+            pumpCard.className = 'glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300';
+
+            activeModeBadge.textContent = '--';
+            activeModeBadge.className = 'font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700';
+
+            chartStatusBadge.textContent = 'Chart Paused';
+            chartStatusBadge.className = 'text-xs font-mono text-slate-400 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800';
+        }
+
+        function enableControlButtons(enabled) {
+            [
+                { btn: btnAuto, text: 'AUTO MODE', icon: 'fa-robot', color: 'bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border-cyan-500/40' },
+                { btn: btnOn, text: 'TURN PUMP ON', icon: 'fa-power-off', color: 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40' },
+                { btn: btnOff, text: 'TURN PUMP OFF', icon: 'fa-circle-stop', color: 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border-rose-500/40' }
+            ].forEach(item => {
+                if (enabled) {
+                    item.btn.disabled = false;
+                    item.btn.className = `control-btn w-full py-3.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-between border shadow-md active:scale-[0.98] ${item.color}`;
+                } else {
+                    item.btn.disabled = true;
+                    item.btn.className = 'control-btn w-full py-3.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-between border bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed opacity-60';
+                }
+            });
+        }
+
+        // -------------------------------------------------------------
+        // LOG CONSOLE & TOAST MESSAGES
+        // -------------------------------------------------------------
+        function addLog(message, tag = 'INFO') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logItem = document.createElement('div');
+            logItem.className = 'flex items-start gap-2 border-b border-slate-900 pb-1';
+
+            let tagColor = 'text-slate-400 bg-slate-800';
+            if (tag === 'ONLINE') tagColor = 'text-emerald-300 bg-emerald-950 border border-emerald-800';
+            if (tag === 'COMMAND') tagColor = 'text-cyan-300 bg-cyan-950 border border-cyan-800';
+            if (tag === 'OFFLINE' || tag === 'ERROR') tagColor = 'text-rose-300 bg-rose-950 border border-rose-800';
+
+            logItem.innerHTML = `
+                <span class="text-slate-500 whitespace-nowrap">[${timestamp}]</span>
+                <span class="px-1.5 py-0.2 text-[10px] rounded font-bold ${tagColor}">${tag}</span>
+                <span class="text-slate-300">${message}</span>
+            `;
+
+            logConsole.prepend(logItem);
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            
+            let bgClass = 'bg-slate-800 text-slate-100 border-slate-700';
+            let icon = 'fa-circle-info text-blue-400';
+
+            if (type === 'success') {
+                bgClass = 'bg-emerald-950 text-emerald-100 border-emerald-700';
+                icon = 'fa-circle-check text-emerald-400';
+            } else if (type === 'error') {
+                bgClass = 'bg-rose-950 text-rose-100 border-rose-700';
+                icon = 'fa-circle-xmark text-rose-400';
+            }
+
+            toast.className = `flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl text-xs font-medium transform transition-all duration-300 pointer-events-auto ${bgClass}`;
+            toast.innerHTML = `<i class="fa-solid ${icon} text-base"></i><span>${message}</span>`;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-x-4');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
